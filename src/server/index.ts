@@ -549,7 +549,30 @@ async function main() {
     await mcpServer.handleLegacyMessages(req, res);
   });
 
-  // Session cleanup endpoint (DELETE)
+  // Session termination endpoint (DELETE with session ID in header)
+  app.delete(endpoint, async (req, res) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    
+    log('info', 'TERMINATE', `Session termination requested: ${sessionId || 'none'}`);
+    
+    if (!sessionId) {
+      log('error', 'TERMINATE-ERROR', 'Missing session ID in termination request');
+      res.status(400).json(createErrorResponse("Mcp-Session-Id header is required"));
+      return;
+    }
+    
+    const cleaned = await mcpServer.cleanupSession(sessionId);
+    
+    if (cleaned) {
+      log('info', 'TERMINATE', `Session terminated successfully: ${sessionId}`);
+      res.status(204).send();
+    } else {
+      log('error', 'TERMINATE-ERROR', `Session not found for termination: ${sessionId}`);
+      res.status(404).json(createErrorResponse("Session not found"));
+    }
+  });
+
+  // Session cleanup endpoint (DELETE with session ID in URL - legacy support)
   app.delete(`${endpoint}/:sessionId`, async (req, res) => {
     const sessionId = req.params.sessionId;
     const cleaned = await mcpServer.cleanupSession(sessionId);

@@ -13,7 +13,7 @@ services:
       - PORT=3001
       - MCP_ENDPOINT=/mcp
       - ENABLE_LEGACY_TRANSPORT=true
-      - LOG_LEVEL=info  # info = Basic logs, debug = Detailed server logs dump
+      - LOG_LEVEL=debug  # info = Basic logs, debug = Detailed server logs dump
     restart: unless-stopped
     networks:
       - mcp-network
