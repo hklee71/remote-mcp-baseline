@@ -47,12 +47,25 @@ npm run dev
 
 1. Build and run with Docker Compose:
 ```bash
+# Basic logging (info level)
 docker-compose up -d
+
+# Detailed logging (debug level)
+LOG_LEVEL=debug docker-compose up -d
 ```
 
 2. Check server health:
 ```bash
 curl http://localhost:3001/health
+```
+
+3. View logs:
+```bash
+# View logs
+docker-compose logs mcp-server
+
+# Follow logs in real-time
+docker-compose logs -f mcp-server
 ```
 
 ## API Endpoints
@@ -127,7 +140,7 @@ docker save remote-mcp-server:latest > mcp-server.tar
 | PORT | 3001 | Server port |
 | MCP_ENDPOINT | /mcp | Main MCP endpoint |
 | ENABLE_LEGACY_TRANSPORT | true | Enable legacy HTTP+SSE support |
-| LOG_LEVEL | info | Logging level |
+| LOG_LEVEL | info | Logging level: `info` (basic), `debug` (detailed) |
 | NODE_ENV | development | Environment mode |
 
 ## Architecture

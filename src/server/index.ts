@@ -16,6 +16,26 @@ import { randomUUID } from 'crypto';
 // Load environment variables
 dotenv.config();
 
+// Logging configuration
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+
+function log(level: 'info' | 'debug' | 'error', category: string, message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  
+  if (level === 'error' || LOG_LEVEL === 'debug' || (LOG_LEVEL === 'info' && level === 'info')) {
+    const logMessage = data 
+      ? `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message} ${JSON.stringify(data, null, 2)}` 
+      : `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message}`;
+    
+    if (level === 'error') {
+      console.error(logMessage);
+    } else {
+      console.log(logMessage);
+    }
+    process.stdout.write(''); // Force flush
+  }
+}
+
 // Store active transports by session ID
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 const servers: { [sessionId: string]: Server } = {};
@@ -296,11 +316,20 @@ class MCPServerWrapper {
     try {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       const requestBody = req.body;
+      
+      log('debug', 'HTTP-POST', `Incoming request - SessionId: ${sessionId || 'none'}`, {
+        method: requestBody?.method,
+        headers: req.headers,
+        bodyKeys: Object.keys(requestBody || {})
+      });
 
       // Check if this is an initialize request
       if (isInitializeRequest(requestBody)) {
+        log('info', 'INIT', 'Processing initialize request');
+        
         // Initialize requests should not have a session ID
         if (sessionId) {
+          log('error', 'INIT-ERROR', 'Initialize request includes session ID (invalid)');
           res.status(400).json(this.createErrorResponse("Initialize request must not include session ID"));
           return;
         }
@@ -314,6 +343,8 @@ class MCPServerWrapper {
         const server = createMCPServer();
         await server.connect(transport);
 
+        log('debug', 'INIT', 'Transport and server created, handling request...');
+        
         // Handle the initialize request (this will generate the session ID)
         await transport.handleRequest(req, res, requestBody);
 
@@ -321,11 +352,16 @@ class MCPServerWrapper {
         if (transport.sessionId) {
           this.transports[transport.sessionId] = transport;
           this.servers[transport.sessionId] = server;
-          console.log(`New session created: ${transport.sessionId}`);
+          log('info', 'SESSION', `New session created: ${transport.sessionId}`, {
+            totalSessions: Object.keys(this.transports).length
+          });
         }
       } else {
+        log('debug', 'REQUEST', `Processing non-init request for session: ${sessionId}`);
+        
         // Non-initialize requests must have a session ID
         if (!sessionId) {
+          log('error', 'REQUEST-ERROR', 'Missing session ID for non-init request');
           res.status(400).json(this.createErrorResponse("Mcp-Session-Id header is required"));
           return;
         }
@@ -333,15 +369,22 @@ class MCPServerWrapper {
         // Find existing transport
         const transport = this.transports[sessionId];
         if (!transport) {
+          log('error', 'REQUEST-ERROR', `Session not found: ${sessionId}`, {
+            availableSessions: Object.keys(this.transports)
+          });
           res.status(404).json(this.createErrorResponse("Session not found"));
           return;
         }
 
+        log('debug', 'REQUEST', `Forwarding to transport for session: ${sessionId}`);
         // Handle request with existing transport
         await transport.handleRequest(req, res, requestBody);
       }
     } catch (error) {
-      console.error('Error handling POST request:', error);
+      log('error', 'ERROR', 'Error handling POST request', { 
+        error: error instanceof Error ? error.message : String(error), 
+        stack: error instanceof Error ? error.stack : undefined 
+      });
       if (!res.headersSent) {
         res.status(500).json(this.createErrorResponse("Internal error"));
       }
@@ -379,11 +422,13 @@ class MCPServerWrapper {
       if (transport.sessionId) {
         this.transports[transport.sessionId] = transport;
         this.servers[transport.sessionId] = server;
-        console.log(`Legacy SSE session created: ${transport.sessionId}`);
+        log('info', 'LEGACY-SSE', `Legacy SSE session created: ${transport.sessionId}`, {
+          totalSessions: Object.keys(this.transports).length
+        });
 
         // Clean up on disconnect
         req.on('close', () => {
-          console.log(`Legacy SSE connection closed: ${transport.sessionId}`);
+          log('info', 'LEGACY-SSE', `Connection closed: ${transport.sessionId}`);
           this.cleanupSession(transport.sessionId!).catch(console.error);
         });
       }
@@ -445,7 +490,9 @@ class MCPServerWrapper {
         delete this.servers[sessionId];
       }
       delete this.transports[sessionId];
-      console.log(`Session cleaned up: ${sessionId}`);
+      log('info', 'CLEANUP', `Session cleaned up: ${sessionId}`, {
+        remainingSessions: Object.keys(this.transports).length
+      });
       return true;
     }
     return false;
@@ -473,6 +520,7 @@ async function main() {
 
   // Health check endpoint
   app.get('/health', (req, res) => {
+    log('debug', 'HEALTH', 'Health check requested');
     res.json({ 
       status: 'ok', 
       transport: 'streamable-http',
@@ -516,6 +564,7 @@ async function main() {
   // Start Express server
   app.listen(port, () => {
     console.log(`MCP Server running on port ${port}`);
+    console.log(`Log Level: ${LOG_LEVEL}`);
     console.log(`Endpoints:`);
     console.log(`  - Streamable HTTP: POST ${endpoint}`);
     console.log(`  - SSE Stream: GET ${endpoint}`);
@@ -523,6 +572,12 @@ async function main() {
     console.log(`  - Legacy Messages: POST /messages`);
     console.log(`  - Health Check: GET /health`);
     console.log(`\nServer is ready to accept connections from Claude.ai and other MCP clients.`);
+    
+    log('info', 'STARTUP', `MCP Server started successfully`, {
+      port,
+      logLevel: LOG_LEVEL,
+      endpoints: [endpoint, '/sse', '/messages', '/health']
+    });
   });
 
   // Handle shutdown
