@@ -23,16 +23,23 @@ function log(level: 'info' | 'debug' | 'error', category: string, message: strin
   const timestamp = new Date().toISOString();
   
   if (level === 'error' || LOG_LEVEL === 'debug' || (LOG_LEVEL === 'info' && level === 'info')) {
-    const logMessage = data 
-      ? `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message} ${JSON.stringify(data, null, 2)}` 
-      : `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message}`;
+    // Single-line formatting for container compatibility
+    let logMessage = `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message}`;
+    
+    // Add data as single-line key-value pairs instead of multi-line JSON
+    if (data) {
+      const dataStr = Object.entries(data)
+        .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`)
+        .join(' ');
+      logMessage += ` (${dataStr})`;
+    }
     
     if (level === 'error') {
       console.error(logMessage);
     } else {
       console.log(logMessage);
     }
-    process.stdout.write(''); // Force flush
+    // Removed process.stdout.write('') force flush for container compatibility
   }
 }
 
@@ -429,12 +436,19 @@ class MCPServerWrapper {
         // Clean up on disconnect
         req.on('close', () => {
           log('info', 'LEGACY-SSE', `Connection closed: ${transport.sessionId}`);
-          this.cleanupSession(transport.sessionId!).catch(console.error);
+          this.cleanupSession(transport.sessionId!).catch((error) => {
+            log('error', 'CLEANUP-ERROR', `Error cleaning up session ${transport.sessionId}`, {
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
         });
       }
 
     } catch (error) {
-      console.error('Error handling legacy SSE connection:', error);
+      log('error', 'LEGACY-SSE-ERROR', 'Error handling legacy SSE connection', { 
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       if (!res.headersSent) {
         res.status(500).json(this.createErrorResponse("Internal error creating SSE connection"));
       }
@@ -460,7 +474,10 @@ class MCPServerWrapper {
       await transport.handleRequest(req, res, req.body);
       
     } catch (error) {
-      console.error('Error handling legacy messages request:', error);
+      log('error', 'LEGACY-MESSAGES-ERROR', 'Error handling legacy messages request', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       if (!res.headersSent) {
         res.status(500).json(this.createErrorResponse("Internal error"));
       }
@@ -486,7 +503,11 @@ class MCPServerWrapper {
     if (this.transports[sessionId]) {
       const server = this.servers[sessionId];
       if (server) {
-        await server.close().catch(console.error);
+        await server.close().catch((error) => {
+          log('error', 'CLEANUP-ERROR', `Error closing server for session ${sessionId}`, {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
         delete this.servers[sessionId];
       }
       delete this.transports[sessionId];
@@ -499,9 +520,13 @@ class MCPServerWrapper {
   }
 
   async shutdown() {
-    console.log('\nShutting down server...');
+    log('info', 'SHUTDOWN', 'Shutting down server...');
     for (const [sessionId, server] of Object.entries(this.servers)) {
-      await server.close().catch(console.error);
+      await server.close().catch((error) => {
+        log('error', 'SHUTDOWN-ERROR', `Error closing server for session ${sessionId}`, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
     }
   }
 }
@@ -586,17 +611,18 @@ async function main() {
 
   // Start Express server
   app.listen(port, () => {
-    console.log(`MCP Server running on port ${port}`);
-    console.log(`Log Level: ${LOG_LEVEL}`);
-    console.log(`Endpoints:`);
-    console.log(`  - Streamable HTTP: POST ${endpoint}`);
-    console.log(`  - SSE Stream: GET ${endpoint}`);
-    console.log(`  - Legacy SSE: GET /sse`);
-    console.log(`  - Legacy Messages: POST /messages`);
-    console.log(`  - Health Check: GET /health`);
-    console.log(`\nServer is ready to accept connections from Claude.ai and other MCP clients.`);
+    // Use structured logging for all startup messages
+    log('info', 'STARTUP', `MCP Server running on port ${port}`);
+    log('info', 'STARTUP', `Log Level: ${LOG_LEVEL}`);
+    log('info', 'STARTUP', 'Endpoints configured');
+    log('info', 'STARTUP', `  - Streamable HTTP: POST ${endpoint}`);
+    log('info', 'STARTUP', `  - SSE Stream: GET ${endpoint}`);
+    log('info', 'STARTUP', '  - Legacy SSE: GET /sse');
+    log('info', 'STARTUP', '  - Legacy Messages: POST /messages');
+    log('info', 'STARTUP', '  - Health Check: GET /health');
+    log('info', 'STARTUP', 'Server is ready to accept connections from Claude.ai and other MCP clients');
     
-    log('info', 'STARTUP', `MCP Server started successfully`, {
+    log('info', 'STARTUP', 'MCP Server started successfully', {
       port,
       logLevel: LOG_LEVEL,
       endpoints: [endpoint, '/sse', '/messages', '/health']
@@ -611,6 +637,9 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Failed to start server:', error);
+  log('error', 'STARTUP-ERROR', 'Failed to start server', {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined
+  });
   process.exit(1);
 });

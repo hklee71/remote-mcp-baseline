@@ -239,17 +239,16 @@ async handleGetRequest(req: Request, res: Response) {
    - Session management with proper cleanup
    - Multi-transport support (Streamable HTTP primary)
 
-2. **Logging Implementation**
-   ```typescript
-   // Logging levels:
-   - LOG_LEVEL=info: Session events, errors, startup
-   - LOG_LEVEL=debug: All info + request details, routing, debugging
-   ```
+2. **Logging System Architecture**
+   - **Environment Variable Control**: `LOG_LEVEL` (docker-compose.yml)
+   - **Production-Ready**: LOG_LEVEL=info prevents silent failures
+   - **Development-Friendly**: LOG_LEVEL=debug provides verbose debugging
+   - **Container Compatible**: Synology Container Manager log capture support
 
 3. **Docker Configuration**
    - docker-compose.yml with LOG_LEVEL configuration
-   - Proper log output with timestamps and categories
-   - Container logging via `docker logs` command
+   - Structured logging with timestamps and categories
+   - Container logging via `docker logs` command and Synology Container Manager
 
 ### ⚠️ Outstanding Issues
 
@@ -306,6 +305,73 @@ async handleGetRequest(req: Request, res: Response) {
 - **Cloudflare Tunnel**: Active ✅
 - **Claude.ai Integration**: Connected ✅
 - **MCP Inspector**: Streamable HTTP ✅, SSE ❌
+
+## Logging System Technical Requirements
+
+### LOG_LEVEL Configuration
+
+#### LOG_LEVEL=info (Production Mode)
+**Purpose**: Minimal logging for production deployment with error visibility
+
+**Captures**:
+- `STARTUP` - Server initialization and configuration
+- `SESSION` - Session lifecycle events (create, cleanup, terminate)
+- `INIT` - MCP initialize request processing
+- `LEGACY-SSE` - Legacy SSE connection events
+- `CLEANUP` - Session cleanup operations
+- `TERMINATE` - Session termination events
+- `ERROR` - **ALL error conditions** (guaranteed - no silent failures)
+
+**Excludes**: Verbose request details, routing decisions, health checks
+
+#### LOG_LEVEL=debug (Development Mode)
+**Purpose**: Comprehensive logging for development and troubleshooting
+
+**Captures**: All LOG_LEVEL=info content PLUS:
+- `HTTP-POST` - Every incoming HTTP request with headers and body details
+- `REQUEST` - Request routing decisions and transport forwarding
+- `HEALTH` - Health check requests (every ping)
+- `INIT` - Detailed initialize processing steps
+
+### Log Categories and Usage
+
+| Category | Level | Purpose | Example |
+|----------|-------|---------|---------|
+| `STARTUP` | info | Server initialization | Server running on port 3001 |
+| `SESSION` | info | Session management | New session created abc123 |
+| `INIT` | info | MCP initialize requests | Processing initialize request |
+| `ERROR` | **always** | Any failures/exceptions | Session not found |
+| `HTTP-POST` | debug | Request details | Incoming request with headers |
+| `REQUEST` | debug | Routing decisions | Forwarding to transport |
+| `HEALTH` | debug | Health check pings | Health check requested |
+
+### Container Manager Compatibility
+
+#### Technical Requirements
+- **Direct console.log/error output** to stdout/stderr
+- **Single-line log formatting** (no multi-line JSON)
+- **No force flush operations** that interfere with container log capture
+- **Structured timestamps** with ISO format for container log aggregation
+
+#### Synology Container Manager Specific
+- Logs appear in Container Manager > Log tab
+- Real-time log streaming support
+- Environment variable control via docker-compose.yml
+- Compatible with `docker logs` command
+
+### Error Handling Guarantees
+
+#### No Silent Failures
+- **All errors logged regardless of LOG_LEVEL**
+- Error condition: `level === 'error'` bypasses LOG_LEVEL filtering
+- Production safety: LOG_LEVEL=info still captures all failures
+- Development visibility: LOG_LEVEL=debug adds context for debugging
+
+#### Error Coverage
+- Protocol compliance errors (invalid sessions, missing headers)
+- Transport errors (connection failures, routing issues)
+- Tool execution errors (invalid parameters, runtime exceptions)
+- Session lifecycle errors (cleanup failures, termination issues)
 
 ## Git Commit Notes
 - **Do Not Include These Lines in Commits**:
