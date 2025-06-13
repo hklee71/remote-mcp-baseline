@@ -361,6 +361,67 @@ class MCPServerWrapper {
     return;
   }
 
+  async handleLegacySSE(req: express.Request, res: express.Response) {
+    try {
+      // Create new transport and server for legacy SSE
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: false
+      });
+
+      const server = createMCPServer();
+      await server.connect(transport);
+
+      // Handle the SSE connection directly
+      await transport.handleRequest(req, res);
+
+      // Store the session after successful connection
+      if (transport.sessionId) {
+        this.transports[transport.sessionId] = transport;
+        this.servers[transport.sessionId] = server;
+        console.log(`Legacy SSE session created: ${transport.sessionId}`);
+
+        // Clean up on disconnect
+        req.on('close', () => {
+          console.log(`Legacy SSE connection closed: ${transport.sessionId}`);
+          this.cleanupSession(transport.sessionId!).catch(console.error);
+        });
+      }
+
+    } catch (error) {
+      console.error('Error handling legacy SSE connection:', error);
+      if (!res.headersSent) {
+        res.status(500).json(this.createErrorResponse("Internal error creating SSE connection"));
+      }
+    }
+  }
+
+  async handleLegacyMessages(req: express.Request, res: express.Response) {
+    try {
+      const sessionId = req.query.sessionId as string;
+      
+      if (!sessionId) {
+        res.status(400).json(this.createErrorResponse("sessionId query parameter is required"));
+        return;
+      }
+
+      const transport = this.transports[sessionId];
+      if (!transport) {
+        res.status(404).json(this.createErrorResponse("Session not found"));
+        return;
+      }
+
+      // Handle the request with existing transport
+      await transport.handleRequest(req, res, req.body);
+      
+    } catch (error) {
+      console.error('Error handling legacy messages request:', error);
+      if (!res.headersSent) {
+        res.status(500).json(this.createErrorResponse("Internal error"));
+      }
+    }
+  }
+
   private createErrorResponse(message: string, id: any = null) {
     return {
       jsonrpc: '2.0',
@@ -430,6 +491,16 @@ async function main() {
     await mcpServer.handleGetRequest(req, res);
   });
 
+  // Legacy SSE endpoint for MCP Inspector compatibility
+  app.get('/sse', async (req, res) => {
+    await mcpServer.handleLegacySSE(req, res);
+  });
+
+  // Legacy messages endpoint for SSE transport
+  app.post('/messages', async (req, res) => {
+    await mcpServer.handleLegacyMessages(req, res);
+  });
+
   // Session cleanup endpoint (DELETE)
   app.delete(`${endpoint}/:sessionId`, async (req, res) => {
     const sessionId = req.params.sessionId;
@@ -448,6 +519,8 @@ async function main() {
     console.log(`Endpoints:`);
     console.log(`  - Streamable HTTP: POST ${endpoint}`);
     console.log(`  - SSE Stream: GET ${endpoint}`);
+    console.log(`  - Legacy SSE: GET /sse`);
+    console.log(`  - Legacy Messages: POST /messages`);
     console.log(`  - Health Check: GET /health`);
     console.log(`\nServer is ready to accept connections from Claude.ai and other MCP clients.`);
   });

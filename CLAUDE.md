@@ -204,3 +204,8 @@ async handleGetRequest(req: Request, res: Response) {
 2. **Cloudflare Remote MCP Servers**
    - URL: https://blog.cloudflare.com/remote-model-context-protocol-servers-mcp/
    - Context: Deployment options, scaling considerations
+
+## Git Commit Notes
+- **Do Not Include These Lines in Commits**:
+  - "🤖 Generated with [Claude Code](https://claude.ai/code)"
+  - "Co-Authored-By: Claude <noreply@anthropic.com>"
