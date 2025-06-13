@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: remote-mcp-server
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - MCP_ENDPOINT=/mcp
+      - ENABLE_LEGACY_TRANSPORT=true
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  mcp-network:
+    driver: bridge

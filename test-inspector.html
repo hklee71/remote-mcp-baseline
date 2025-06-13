@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Server Test</title>
+</head>
+<body>
+    <h1>MCP Server Connection Test</h1>
+    <button onclick="testConnection()">Test Connection</button>
+    <pre id="output"></pre>
+
+    <script>
+    async function testConnection() {
+        const output = document.getElementById('output');
+        output.textContent = 'Testing connection...\n';
+
+        try {
+            // Test health endpoint
+            const healthResponse = await fetch('http://localhost:3001/health');
+            const healthData = await healthResponse.json();
+            output.textContent += 'Health check: ' + JSON.stringify(healthData, null, 2) + '\n\n';
+
+            // Test MCP initialize
+            const initResponse = await fetch('http://localhost:3001/mcp', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json, text/event-stream'
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'initialize',
+                    params: {
+                        protocolVersion: '2025-03-26',
+                        capabilities: {
+                            tools: {}
+                        },
+                        clientInfo: {
+                            name: 'test-client',
+                            version: '1.0.0'
+                        }
+                    },
+                    id: 1
+                })
+            });
+
+            const contentType = initResponse.headers.get('content-type');
+            output.textContent += 'Response Content-Type: ' + contentType + '\n';
+            output.textContent += 'Response Status: ' + initResponse.status + '\n\n';
+
+            if (contentType.includes('text/event-stream')) {
+                const text = await initResponse.text();
+                output.textContent += 'SSE Response:\n' + text;
+            } else {
+                const data = await initResponse.json();
+                output.textContent += 'JSON Response:\n' + JSON.stringify(data, null, 2);
+            }
+        } catch (error) {
+            output.textContent += 'Error: ' + error.message + '\n';
+            console.error(error);
+        }
+    }
+    </script>
+</body>
+</html>
