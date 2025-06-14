@@ -252,14 +252,16 @@ async handleGetRequest(req: Request, res: Response) {
 
 ### ⚠️ Outstanding Issues
 
-1. **Legacy SSE Transport**
-   - MCP Inspector cannot connect in SSE mode
-   - Streamable HTTP works fine
-   - Root cause: Legacy SSE implementation needs different approach than StreamableHTTPServerTransport
+1. **Legacy SSE Transport** ⭐ **ROOT CAUSE IDENTIFIED - READY FOR FIX**
+   - **Status**: HTTP 400 error when MCP Inspector connects to /sse endpoint
+   - **Root Cause**: Incorrect transport handling approach (using Streamable HTTP pattern for legacy SSE)
+   - **Critical Fix Required**: Must use `await transport.handlePostMessage(req, res, req.body)` instead of `handleRequest()`
+   - **Reference**: levelup.gitconnected.com article + MCPDemo-Typescript repository
+   - **Implementation Plan**: Ready for next session
 
 2. **Docker Logging Initial Issue**
-   - Fixed: Session events now properly log at info level
-   - Replaced console.log with structured log() function
+   - ✅ **Fixed**: Session events now properly log at info level
+   - ✅ **Fixed**: Container Manager compatibility with dumb-init
 
 ### 📝 Key Learnings
 
@@ -373,6 +375,115 @@ async handleGetRequest(req: Request, res: Response) {
 - Transport errors (connection failures, routing issues)
 - Tool execution errors (invalid parameters, runtime exceptions)
 - Session lifecycle errors (cleanup failures, termination issues)
+
+## Legacy SSE Transport Fix Implementation Plan
+
+### Golden Codebase: Dual Transport Architecture
+The remote MCP server provides **full dual transport capability** for maximum client compatibility:
+
+#### 🔧 **Current Status**
+- ✅ **Streamable HTTP Transport**: `/mcp` endpoint - **Working perfectly**
+- ❌ **Legacy SSE Transport**: `/sse` endpoint - **HTTP 400 error (needs fix)**
+
+#### 🎯 **Target Golden Codebase Architecture**
+```
+Remote MCP Server (Universal Compatibility)
+├── /mcp (Streamable HTTP) ✅ Working
+│   ├── POST - Handle all requests  
+│   └── GET - SSE stream (optional)
+├── /sse (Legacy SSE) ❌ Needs fix
+│   └── GET - Establish SSE connection
+├── /messages (Legacy SSE) ❌ Needs fix  
+│   └── POST - Handle client messages
+└── /health - Health check ✅ Working
+```
+
+#### 🎯 **Why Both Transports Matter**
+
+**Streamable HTTP** (`/mcp`) - **Primary Transport**
+- ✅ **Claude.ai**: Uses this for production integration
+- ✅ **MCP Inspector**: Works perfectly in streamable-http mode
+- ✅ **Modern clients**: Recommended transport (MCP 2025-03-26)
+- ✅ **Serverless friendly**: No persistent connections required
+
+**Legacy SSE** (`/sse` + `/messages`) - **Backward Compatibility**
+- 🔄 **Older MCP clients**: May only support SSE transport
+- 🔄 **Legacy tools**: Built before Streamable HTTP existed  
+- 🔄 **Universal compatibility**: Ensures any MCP client can connect
+- 🔄 **Testing flexibility**: Some testing tools prefer SSE
+
+This **transport-agnostic design** makes it a **truly universal MCP server** suitable as a golden codebase reference implementation.
+
+### Problem Analysis Summary
+**Issue**: HTTP 400 errors when MCP Inspector connects to legacy SSE endpoints (/sse)
+**Validated**: Both local (localhost:3001/sse) and remote (task.wandermusings.com/sse) return 400 errors
+**Root Cause**: Using Streamable HTTP transport pattern for legacy SSE implementation
+
+### Critical Finding from Reference Article
+**Source**: https://levelup.gitconnected.com/mcp-server-and-client-with-sse-the-new-streamable-http-d860850d9d9d
+**Reference Repo**: https://github.com/0Itsuki0/MCPDemo-Typescript-
+
+**Key Quote**: "IMPORTANT! using `await transport.handlePostMessage(req, res)` will cause `SSE transport error: Error: Error POSTing to endpoint (HTTP 400): InternalServerError: stream is not readable` on the client side"
+
+**The Fix**: Must use `await transport.handlePostMessage(req, res, req.body)` with explicit req.body parameter
+
+### Legacy SSE vs Streamable HTTP Architecture Differences
+
+#### Legacy SSE Pattern (Required for /sse endpoint)
+```typescript
+// Separate endpoints
+GET /connect (or /sse)  // Establish SSE connection  
+POST /messages         // Handle client messages
+
+// Session management
+sessionId = req.query.sessionId  // Query parameter
+transport = new SSEServerTransport(POST_ENDPOINT, res)
+await transport.handlePostMessage(req, res, req.body)  // Explicit body
+```
+
+#### Streamable HTTP Pattern (Current /mcp endpoint)
+```typescript
+// Single endpoint  
+POST/GET /mcp          // Both methods on same endpoint
+
+// Session management
+sessionId = req.headers['mcp-session-id']  // Header
+transport = new StreamableHTTPServerTransport()
+await transport.handleRequest(req, res, req.body)
+```
+
+### Implementation Plan (Next Session)
+
+#### Phase 1: Fix Legacy SSE Implementation
+1. **Replace SSE endpoint logic** with proper legacy pattern
+2. **Add separate /messages endpoint** for client message handling
+3. **Fix session management** to use query parameters instead of headers
+4. **Use SSEServerTransport** instead of StreamableHTTPServerTransport
+5. **Implement connection cleanup** on SSE close events
+
+#### Phase 2: Validation Testing
+1. **MCP Inspector validation**: Test `http://localhost:6274/?transport=sse&serverUrl=http://localhost:3001/sse`
+2. **Session lifecycle testing**: Initialize → tool calls → cleanup
+3. **Error scenario testing**: Invalid sessions, malformed requests
+4. **Comparison testing**: Legacy SSE vs Streamable HTTP behavior
+
+#### Phase 3: Testing Framework Enhancement
+1. **Automate legacy transport testing** with curl scripts
+2. **Tool parameter edge case validation** for all tools (echo, ping, get_time)
+3. **Session stress testing** for concurrent connections
+4. **Error handling validation** for JSON-RPC compliance
+
+### Success Criteria
+- ✅ MCP Inspector connects successfully to /sse endpoint (no HTTP 400)
+- ✅ All tools functional via legacy SSE transport
+- ✅ Session management working with query parameters
+- ✅ Backward compatibility with legacy MCP clients maintained
+- ✅ Golden codebase ready for production deployments
+
+### Expected Timeline
+- **Implementation**: 1-2 hours (straightforward fix with clear reference)
+- **Testing**: 1 hour (automated validation scripts)
+- **Documentation**: 30 minutes (update test results and guides)
 
 ## Git Commit Notes
 - **Do Not Include These Lines in Commits**:

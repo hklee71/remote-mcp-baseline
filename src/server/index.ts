@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { 
   CallToolRequestSchema, 
   ListToolsRequestSchema,
@@ -321,7 +322,9 @@ function createErrorResponse(message: string, id: any = null) {
 // Create MCP server wrapper class
 class MCPServerWrapper {
   private transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+  private sseTransports: { [sessionId: string]: SSEServerTransport } = {};
   private servers: { [sessionId: string]: Server } = {};
+  private sseServers: { [sessionId: string]: Server } = {};
 
   async handlePostRequest(req: express.Request, res: express.Response) {
     try {
@@ -417,36 +420,34 @@ class MCPServerWrapper {
 
   async handleLegacySSE(req: express.Request, res: express.Response) {
     try {
-      // Create new transport and server for legacy SSE
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        enableJsonResponse: false
+      log('info', 'LEGACY-SSE', 'Establishing legacy SSE connection');
+      
+      // Create SSEServerTransport with POST endpoint for messages
+      const transport = new SSEServerTransport('/messages', res);
+      const server = createMCPServer();
+      
+      // Connect server to transport
+      await server.connect(transport);
+      
+      // Store the session
+      const sessionId = transport.sessionId;
+      this.sseTransports[sessionId] = transport;
+      this.sseServers[sessionId] = server;
+      
+      log('info', 'LEGACY-SSE', `Legacy SSE session created: ${sessionId}`, {
+        totalSSESessions: Object.keys(this.sseTransports).length,
+        totalSessions: Object.keys(this.transports).length
       });
 
-      const server = createMCPServer();
-      await server.connect(transport);
-
-      // Handle the SSE connection directly
-      await transport.handleRequest(req, res);
-
-      // Store the session after successful connection
-      if (transport.sessionId) {
-        this.transports[transport.sessionId] = transport;
-        this.servers[transport.sessionId] = server;
-        log('info', 'LEGACY-SSE', `Legacy SSE session created: ${transport.sessionId}`, {
-          totalSessions: Object.keys(this.transports).length
-        });
-
-        // Clean up on disconnect
-        req.on('close', () => {
-          log('info', 'LEGACY-SSE', `Connection closed: ${transport.sessionId}`);
-          this.cleanupSession(transport.sessionId!).catch((error) => {
-            log('error', 'CLEANUP-ERROR', `Error cleaning up session ${transport.sessionId}`, {
-              error: error instanceof Error ? error.message : String(error)
-            });
+      // Clean up on disconnect
+      res.on('close', () => {
+        log('info', 'LEGACY-SSE', `SSE connection closed: ${sessionId}`);
+        this.cleanupSSESession(sessionId).catch((error) => {
+          log('error', 'CLEANUP-ERROR', `Error cleaning up SSE session ${sessionId}`, {
+            error: error instanceof Error ? error.message : String(error)
           });
         });
-      }
+      });
 
     } catch (error) {
       log('error', 'LEGACY-SSE-ERROR', 'Error handling legacy SSE connection', { 
@@ -463,19 +464,29 @@ class MCPServerWrapper {
     try {
       const sessionId = req.query.sessionId as string;
       
+      log('debug', 'LEGACY-MESSAGES', `Processing legacy message for session: ${sessionId}`, {
+        method: req.body?.method,
+        bodyKeys: Object.keys(req.body || {})
+      });
+      
       if (!sessionId) {
+        log('error', 'LEGACY-MESSAGES-ERROR', 'Missing sessionId query parameter');
         res.status(400).json(this.createErrorResponse("sessionId query parameter is required"));
         return;
       }
 
-      const transport = this.transports[sessionId];
+      // Look up transport in SSE transports
+      const transport = this.sseTransports[sessionId];
       if (!transport) {
+        log('error', 'LEGACY-MESSAGES-ERROR', `SSE session not found: ${sessionId}`, {
+          availableSSESessions: Object.keys(this.sseTransports)
+        });
         res.status(404).json(this.createErrorResponse("Session not found"));
         return;
       }
 
-      // Handle the request with existing transport
-      await transport.handleRequest(req, res, req.body);
+      // CRITICAL: Use handlePostMessage with explicit req.body parameter
+      await transport.handlePostMessage(req, res, req.body);
       
     } catch (error) {
       log('error', 'LEGACY-MESSAGES-ERROR', 'Error handling legacy messages request', {
@@ -500,7 +511,7 @@ class MCPServerWrapper {
   }
 
   getActiveSessions(): number {
-    return Object.keys(this.transports).length;
+    return Object.keys(this.transports).length + Object.keys(this.sseTransports).length;
   }
 
   async cleanupSession(sessionId: string): Promise<boolean> {
@@ -523,11 +534,43 @@ class MCPServerWrapper {
     return false;
   }
 
+  async cleanupSSESession(sessionId: string): Promise<boolean> {
+    if (this.sseTransports[sessionId]) {
+      const server = this.sseServers[sessionId];
+      if (server) {
+        await server.close().catch((error) => {
+          log('error', 'CLEANUP-ERROR', `Error closing SSE server for session ${sessionId}`, {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+        delete this.sseServers[sessionId];
+      }
+      delete this.sseTransports[sessionId];
+      log('info', 'CLEANUP', `SSE session cleaned up: ${sessionId}`, {
+        remainingSSESessions: Object.keys(this.sseTransports).length,
+        remainingSessions: Object.keys(this.transports).length
+      });
+      return true;
+    }
+    return false;
+  }
+
   async shutdown() {
     log('info', 'SHUTDOWN', 'Shutting down server...');
+    
+    // Close all streamable HTTP sessions
     for (const [sessionId, server] of Object.entries(this.servers)) {
       await server.close().catch((error) => {
         log('error', 'SHUTDOWN-ERROR', `Error closing server for session ${sessionId}`, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+    
+    // Close all SSE sessions
+    for (const [sessionId, server] of Object.entries(this.sseServers)) {
+      await server.close().catch((error) => {
+        log('error', 'SHUTDOWN-ERROR', `Error closing SSE server for session ${sessionId}`, {
           error: error instanceof Error ? error.message : String(error)
         });
       });
