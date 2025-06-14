@@ -18,6 +18,9 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine
 
+# Install dumb-init for proper signal handling and logging
+RUN apk add --no-cache dumb-init
+
 WORKDIR /app
 
 # Copy package files
@@ -41,9 +44,10 @@ USER nodejs
 # Expose port
 EXPOSE 3001
 
-# Health check
+# Health check with error handling
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); })"
+  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1))"
 
-# Start server
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/server/index.js"]
