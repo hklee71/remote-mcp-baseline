@@ -351,13 +351,14 @@ async handleGetRequest(req: Request, res: Response) {
 - **Direct console.log/error output** to stdout/stderr
 - **Single-line log formatting** (no multi-line JSON)
 - **No force flush operations** that interfere with container log capture
-- **Structured timestamps** with ISO format for container log aggregation
+- **Simple format without timestamps** - Container Manager adds its own timestamps
 
 #### Synology Container Manager Specific
 - Logs appear in Container Manager > Log tab
 - Real-time log streaming support
 - Environment variable control via docker-compose.yml
 - Compatible with `docker logs` command
+- **Format**: `[Category] message` for maximum compatibility
 
 ### Error Handling Guarantees
 

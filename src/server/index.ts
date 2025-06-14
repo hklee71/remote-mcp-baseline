@@ -20,26 +20,30 @@ dotenv.config();
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 function log(level: 'info' | 'debug' | 'error', category: string, message: string, data?: any) {
-  const timestamp = new Date().toISOString();
+  // Container Manager compatible format: [Category] message
+  // No timestamps - Container Manager adds its own
   
   if (level === 'error' || LOG_LEVEL === 'debug' || (LOG_LEVEL === 'info' && level === 'info')) {
-    // Single-line formatting for container compatibility
-    let logMessage = `[${timestamp}] [${level.toUpperCase()}] [${category}] ${message}`;
+    // Convert category to title case for consistency (STARTUP -> Startup)
+    const formattedCategory = category.split('-').map(part => 
+      part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+    ).join('-');
     
-    // Add data as single-line key-value pairs instead of multi-line JSON
-    if (data) {
-      const dataStr = Object.entries(data)
-        .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`)
-        .join(' ');
-      logMessage += ` (${dataStr})`;
-    }
+    const logMessage = `[${formattedCategory}] ${message}`;
     
     if (level === 'error') {
       console.error(logMessage);
+      // Log error details on separate line if provided
+      if (data) {
+        console.error(`[${formattedCategory}] Error details:`, data);
+      }
     } else {
       console.log(logMessage);
+      // Log additional data on separate line if provided and in debug mode
+      if (data && LOG_LEVEL === 'debug') {
+        console.log(`[${formattedCategory}] Details:`, data);
+      }
     }
-    // Removed process.stdout.write('') force flush for container compatibility
   }
 }
 
